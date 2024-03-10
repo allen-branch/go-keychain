@@ -45,6 +45,38 @@ func TestUpdateItem(t *testing.T) {
 	}
 }
 
+func TestAccessControlItem(t *testing.T) {
+	item := NewItem()
+	item.SetSecClass(SecClassGenericPassword)
+	item.SetService("ExampleService")
+	item.SetAccount("ExampleAccount")
+	item.SetData([]byte("password"))
+
+	// Configure access control
+	ac := &AccessControl{
+		Flags: SecAccessControlCreateFlagsUserPresence,
+	}
+
+	item.attr[AccessControlKey] = ac
+	item.SetAccessGroup("test")
+
+	err := AddItem(item)
+	if err != nil {
+		// Handle error
+		println("error add", err.Error())
+	}
+
+	retrieved, err := GetGenericPassword("ExampleService", "ExampleAccount", "", "")
+	if err != nil {
+		// Handle error
+		println("error get", err.Error())
+	}
+	println("retrieved", string(retrieved))
+
+	defer func() { _ = DeleteItem(item) }()
+	t.Fail()
+}
+
 func TestGenericPassword(t *testing.T) {
 	service, account, label, accessGroup, password := "TestGenericPasswordRef", "test", "", "", "toomanysecrets"
 

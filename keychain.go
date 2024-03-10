@@ -19,6 +19,16 @@ import (
 	"time"
 )
 
+const (
+	nilSecKey           C.SecKeyRef           = 0
+	nilCFData           C.CFDataRef           = 0
+	nilCFString         C.CFStringRef         = 0
+	nilCFDictionary     C.CFDictionaryRef     = 0
+	nilCFError          C.CFErrorRef          = 0
+	nilCFType           C.CFTypeRef           = 0
+	nilSecAccessControl C.SecAccessControlRef = 0
+)
+
 // Error defines keychain errors
 type Error int
 
@@ -185,7 +195,42 @@ var (
 	CreationDateKey = attrKey(C.CFTypeRef(C.kSecAttrCreationDate))
 	// ModificationDateKey is for kSecAttrModificationDate
 	ModificationDateKey = attrKey(C.CFTypeRef(C.kSecAttrModificationDate))
+	// AccessControlKey is for kSecAttrAccessControl
+	AccessControlKey = attrKey(C.CFTypeRef(C.kSecAttrAccessControl))
 )
+
+type SecAccessControlCreateFlags int
+
+var (
+	SecAccessControlCreateFlagsDevicePasscode     SecAccessControlCreateFlags = C.kSecAccessControlDevicePasscode
+	SecAccessControlCreateFlagsBiometryAny        SecAccessControlCreateFlags = C.kSecAccessControlBiometryAny
+	SecAccessControlCreateFlagsBiometryCurrentSet SecAccessControlCreateFlags = C.kSecAccessControlBiometryCurrentSet
+	SecAccessControlCreateFlagsUserPresence       SecAccessControlCreateFlags = C.kSecAccessControlUserPresence
+	SecAccessControlCreateFlagsWatch              SecAccessControlCreateFlags = C.kSecAccessControlWatch
+)
+
+// AccessControl represents access control settings for a keychain item.
+type AccessControl struct {
+	// @todo Protection
+	Flags SecAccessControlCreateFlags
+}
+
+// Convert transforms the AccessControl settings into a CFTypeRef.
+func (ac *AccessControl) Convert() (C.CFTypeRef, error) {
+	protection := C.kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
+	var eref C.CFErrorRef
+	access := C.SecAccessControlCreateWithFlags(
+		C.kCFAllocatorDefault,
+		C.CFTypeRef(protection),
+		C.SecAccessControlCreateFlags(ac.Flags),
+		&eref)
+
+	if err := goError(eref); err != nil {
+		C.CFRelease(C.CFTypeRef(eref))
+		return 0, err
+	}
+	return C.CFTypeRef(access), nil
+}
 
 // Synchronizable is the items synchronizable status
 type Synchronizable int
@@ -650,4 +695,46 @@ func GetGenericPassword(service string, account string, label string, accessGrou
 		return results[0].Data, nil
 	}
 	return nil, nil
+}
+
+func goError(e interface{}) error {
+	if e == nil {
+		return nil
+	}
+
+	switch v := e.(type) {
+	case C.OSStatus:
+		if v == 0 {
+			return nil
+		}
+		return osStatusError{code: int(v)}
+
+	case C.CFErrorRef:
+		if v == nilCFError {
+			return nil
+		}
+
+		code := int(C.CFErrorGetCode(v))
+		if desc := C.CFErrorCopyDescription(v); desc != nilCFString {
+			defer C.CFRelease(C.CFTypeRef(desc))
+
+			if cstr := C.CFStringGetCStringPtr(desc, C.kCFStringEncodingUTF8); cstr != nil {
+				str := C.GoString(cstr)
+
+				return fmt.Errorf("CFError %d (%s)", code, str)
+			}
+
+		}
+		return fmt.Errorf("CFError %d", code)
+	}
+
+	return fmt.Errorf("unknown error type %T", e)
+}
+
+type osStatusError struct {
+	code int
+}
+
+func (oserr osStatusError) Error() string {
+	return fmt.Sprintf("OSStatus %d", oserr.code)
 }
